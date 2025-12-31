@@ -1,5 +1,5 @@
 """Text cleaning utilities."""
-from langchain.schema import Document
+from langchain_core.documents import Document
 from typing import List
 import re
 

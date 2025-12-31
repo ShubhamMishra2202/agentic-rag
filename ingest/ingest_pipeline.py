@@ -1,6 +1,6 @@
 """Document ingestion pipeline."""
 from typing import List
-from langchain.schema import Document
+from langchain_core.documents import Document
 from ingest.pdf_loader import load_pdf
 from ingest.web_loader import load_web
 from ingest.text_cleaner import clean_text

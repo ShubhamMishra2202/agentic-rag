@@ -1,7 +1,10 @@
 langchain
-langgraph
+langchain-core
 langchain-community
 langchain-openai
+langchain-text-splitters
+langgraph
 qdrant-client
 pypdf
 python-dotenv
+bs4
