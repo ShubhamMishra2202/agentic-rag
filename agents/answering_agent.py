@@ -84,10 +84,10 @@ def detect_contradictions(chunks: list) -> bool:
 
 
 def create_answering_agent():
-    """Create an answering agent with citation support.
+    """Create an answering agent with citation support and chat history.
     
     Returns:
-        Chain configured for answering with citations
+        Chain configured for answering with citations and conversation context
     """
     llm = ChatOpenAI(
         model=config.MODEL_NAME,
@@ -96,40 +96,49 @@ def create_answering_agent():
     )
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a helpful assistant that answers questions based on retrieved context.
+        ("system", """You are a helpful assistant that answers questions based on retrieved context and previous conversation.
 
 CRITICAL INSTRUCTIONS:
 1. Always cite your sources using the format [Source: <source_name>] when referencing information from the context.
 2. Extract the source name from the context format "Document X (Source: <source_name>)".
-3. If the retrieved chunks contain contradictory information, explicitly mention this limitation:
+3. Use the conversation history to understand context and provide coherent, follow-up answers.
+4. If the user asks a follow-up question, reference previous answers when relevant.
+5. If the retrieved chunks contain contradictory information, explicitly mention this limitation:
    - State: "Note: The retrieved documents contain contradictory information."
    - Present both perspectives if possible.
    - Indicate which sources support which claims.
-4. If no context is provided or context is empty, answer gracefully:
+6. If no context is provided or context is empty, answer gracefully:
    - State: "I don't have enough information from the retrieved documents to answer this question."
    - Suggest: "Please try rephrasing your query or ensure documents have been ingested into the system."
-5. Base your answer ONLY on the provided context. Do not use external knowledge beyond what's in the context.
-6. If the context doesn't contain enough information to fully answer the question, say so clearly.
-7. Format your answer clearly with proper citations for each claim made.
+7. Base your answer ONLY on the provided context. Do not use external knowledge beyond what's in the context.
+8. If the context doesn't contain enough information to fully answer the question, say so clearly.
+9. Format your answer clearly with proper citations for each claim made.
 
 Example citation format:
 - "According to the documents [Source: paper.pdf], self-attention is..."
 - "The retrieved information [Source: article.pdf] indicates that..."
 
 Always be transparent about limitations and contradictions in the source material."""),
-        ("human", "Context:\n{context}\n\nQuestion: {question}")
+        ("human", """Previous Conversation:
+{conversation_history}
+
+Current Context:
+{context}
+
+Question: {question}""")
     ])
     
     chain = prompt | llm
     return chain
 
 
-def generate_answer(question: str, retrieved_chunks: list) -> str:
-    """Generate answer from retrieved chunks with citations.
+def generate_answer(question: str, retrieved_chunks: list, chat_history: list = None) -> str:
+    """Generate answer from retrieved chunks with citations and chat history.
     
     Args:
         question: User's question
         retrieved_chunks: List of retrieved chunk strings from retrieval agent
+        chat_history: Optional list of previous messages for context
         
     Returns:
         Final answer with citations
@@ -145,7 +154,7 @@ def generate_answer(question: str, retrieved_chunks: list) -> str:
     if not context_str or context_str.strip() == "":
         logger.warning("⚠️  No context provided - answering gracefully")
         answer = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
-        logger.info("✅ Answer generated (empty context)")
+        logger.info("Answer generated (empty context)")
         logger.info("=" * 80)
         return answer
     
@@ -158,19 +167,34 @@ def generate_answer(question: str, retrieved_chunks: list) -> str:
     
     logger.info(f"   Chunks provided: {len(retrieved_chunks)}")
     logger.info(f"   Parsed documents: {len(parsed_chunks)}")
+    logger.info(f"   Chat history length: {len(chat_history) if chat_history else 0}")
     
-    # Create and invoke answering agent
+    # Build conversation context from chat history
+    conversation_context = ""
+    if chat_history:
+        # Extract last N turns for context (avoid token limits)
+        # Keep last 6 messages (approximately 3 Q&A pairs)
+        recent_history = chat_history[-6:]
+        for msg in recent_history:
+            if hasattr(msg, 'type'):
+                if msg.type == "human":
+                    conversation_context += f"Previous question: {msg.content}\n"
+                elif msg.type == "ai":
+                    conversation_context += f"Previous answer: {msg.content}\n"
+    
+    # Create answering agent with chat history support
     answering_agent = create_answering_agent()
     
     result = answering_agent.invoke({
         "context": context_str,
-        "question": question
+        "question": question,
+        "conversation_history": conversation_context if conversation_context else "No previous conversation."
     })
     
     answer = result.content if hasattr(result, 'content') else str(result)
     
     logger.info("Answer generated successfully")
-    logger.info(f"   Answer length: {len(answer)} characters")
+    logger.info(f" Answer length: {len(answer)} characters")
     logger.info("=" * 80)
     
     return answer
