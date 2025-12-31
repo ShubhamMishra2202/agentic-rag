@@ -1,7 +1,6 @@
 """Graph nodes for the RAG workflow."""
 from graph.state import GraphState
 from agents.query_rewriter import rewrite_query
-from agents.answering_agent import create_answering_agent
 from agents.retrieval_agent import create_retrieval_agent_graph
 from langchain_core.messages import HumanMessage, ToolMessage
 
@@ -68,21 +67,14 @@ def answer_node(state: GraphState) -> GraphState:
     Returns:
         Updated state with answer
     """
-    answering_agent = create_answering_agent()
+    from agents.answering_agent import generate_answer
     
     context = state.get("context", [])
-    context_str = "\n".join(context) if context else ""
+    question = state.get("query", "")
     
-    # Handle empty context gracefully
-    if not context_str or context_str.strip() == "":
-        state["answer"] = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
-        return state
+    # Generate answer using the enhanced answering agent
+    answer = generate_answer(question, context)
     
-    result = answering_agent.invoke({
-        "context": context_str,
-        "question": state["query"]
-    })
-    
-    state["answer"] = result.content
+    state["answer"] = answer
     return state
 
