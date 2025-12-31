@@ -176,7 +176,7 @@ def create_retrieval_agent_graph():
          "2. Based on the plan, use search_vectorstore to execute searches for relevant documents.\n"
          "3. You may need to perform multiple searches if the query is complex or requires different aspects.\n"
          "4. Adjust the number of results (k parameter) based on query complexity - use higher k for broad queries, lower for specific ones.\n"
-         "5. Summarize the retrieved documents and present them in a clear format."),
+        ),
         MessagesPlaceholder(variable_name="messages"),
     ])
     
