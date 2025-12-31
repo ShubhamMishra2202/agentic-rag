@@ -1,11 +1,13 @@
 """Document ingestion pipeline."""
 from typing import List
 from langchain_core.documents import Document
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Qdrant
 from ingest.pdf_loader import load_pdf
 from ingest.web_loader import load_web
 from ingest.text_cleaner import clean_text
 from ingest.chunking import chunk_documents
-
+from vectorstore.qdrant_client import get_qdrant_client
 
 def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     """Run the complete ingestion pipeline.
@@ -30,6 +32,31 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     
     # Chunk documents
     chunks = chunk_documents(documents)
+
+    # Add metadata to the chunks
+    for chunk in chunks:
+        chunk.metadata = {
+            "source": source,
+            "source_type": source_type,
+            "chunk_index": chunks.index(chunk)
+        }
+
+    # Embed the chunks
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     
+    qdrant_db_client = get_qdrant_client()
+    vectorstore = Qdrant.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        client=qdrant_db_client,
+        collection_name="agentic_rag_docs"
+    )
+    
+    print(f"Ingested {len(chunks)} chunks into Qdrant")
+    print(f"Vectorstore: {vectorstore}")
     return chunks
+
+
+
+    
 

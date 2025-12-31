@@ -16,4 +16,3 @@ def load_web(url: str) -> List[Document]:
     loader = WebBaseLoader(url)
     documents = loader.load()
     return documents
-
