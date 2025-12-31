@@ -30,12 +30,19 @@ def parse_retrieved_chunks(context_str: str) -> list:
             continue
         
         # Extract source and content
+        # Format: "Document X (Source: source_name, Score: 0.1234):\ncontent"
         if "(Source:" in section:
             parts = section.split("(Source:", 1)
             if len(parts) == 2:
                 source_part = parts[1].split("):", 1)
                 if len(source_part) == 2:
-                    source = source_part[0].strip()
+                    # Extract source name (may include Score, so split on comma)
+                    source_with_score = source_part[0].strip()
+                    # If there's a comma, take only the part before it (the source name)
+                    if "," in source_with_score:
+                        source = source_with_score.split(",")[0].strip()
+                    else:
+                        source = source_with_score
                     content = source_part[1].strip()
                     chunks.append({
                         "source": source,
@@ -83,6 +90,49 @@ def detect_contradictions(chunks: list) -> bool:
     return False
 
 
+def extract_sources_from_chunks(parsed_chunks: list) -> list:
+    """Extract unique sources from parsed chunks.
+    
+    Args:
+        parsed_chunks: List of chunk dicts with 'source' and 'content' keys
+        
+    Returns:
+        List of unique source names
+    """
+    sources = []
+    seen_sources = set()
+    
+    for chunk in parsed_chunks:
+        source = chunk.get("source", "Unknown")
+        if source and source not in seen_sources and source != "Unknown":
+            sources.append(source)
+            seen_sources.add(source)
+    
+    return sources
+
+
+def format_final_response(answer: str, sources: list) -> str:
+    """Format the final response with answer and sources.
+    
+    Args:
+        answer: The generated answer text
+        sources: List of source names
+        
+    Returns:
+        Formatted response string with Answer and Sources sections
+    """
+    formatted = f"Answer:\n{answer}\n\n"
+    
+    if sources:
+        formatted += "Sources:\n"
+        for i, source in enumerate(sources, 1):
+            formatted += f"{i}. {source}\n"
+    else:
+        formatted += "Sources:\nNo relevant sources found in the knowledge base.\n"
+    
+    return formatted
+
+
 def create_answering_agent():
     """Create an answering agent with citation support and chat history.
     
@@ -99,20 +149,21 @@ def create_answering_agent():
         ("system", """You are a helpful assistant that answers questions based on retrieved context and previous conversation.
 
 CRITICAL INSTRUCTIONS:
-1. Always cite your sources using the format [Source: <source_name>] when referencing information from the context.
-2. Extract the source name from the context format "Document X (Source: <source_name>)".
-3. Use the conversation history to understand context and provide coherent, follow-up answers.
-4. If the user asks a follow-up question, reference previous answers when relevant.
-5. If the retrieved chunks contain contradictory information, explicitly mention this limitation:
+1. Generate ONLY the answer explanation - do NOT include a "Sources:" section (that will be added automatically).
+2. Always cite your sources using the format [Source: <source_name>] when referencing information from the context.
+3. Extract the source name from the context format "Document X (Source: <source_name>)".
+4. Use the conversation history to understand context and provide coherent, follow-up answers.
+5. If the user asks a follow-up question, reference previous answers when relevant.
+6. If the retrieved chunks contain contradictory information, explicitly mention this limitation:
    - State: "Note: The retrieved documents contain contradictory information."
    - Present both perspectives if possible.
    - Indicate which sources support which claims.
-6. If no context is provided or context is empty, answer gracefully:
+7. If no context is provided or context is empty, answer gracefully:
    - State: "I don't have enough information from the retrieved documents to answer this question."
    - Suggest: "Please try rephrasing your query or ensure documents have been ingested into the system."
-7. Base your answer ONLY on the provided context. Do not use external knowledge beyond what's in the context.
-8. If the context doesn't contain enough information to fully answer the question, say so clearly.
-9. Format your answer clearly with proper citations for each claim made.
+8. Base your answer ONLY on the provided context. Do not use external knowledge beyond what's in the context.
+9. If the context doesn't contain enough information to fully answer the question, say so clearly.
+10. Format your answer clearly with proper citations for each claim made.
 
 Example citation format:
 - "According to the documents [Source: paper.pdf], self-attention is..."
@@ -153,20 +204,22 @@ def generate_answer(question: str, retrieved_chunks: list, chat_history: list = 
     # Check for empty context
     if not context_str or context_str.strip() == "":
         logger.warning("⚠️  No context provided - answering gracefully")
-        answer = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
+        answer_text = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
         logger.info("Answer generated (empty context)")
         logger.info("=" * 80)
-        return answer
+        return format_final_response(answer_text, [])
     
-    # Parse chunks to detect contradictions
+    # Parse chunks to detect contradictions and extract sources
     parsed_chunks = parse_retrieved_chunks(context_str)
     has_contradictions = detect_contradictions(parsed_chunks)
+    sources = extract_sources_from_chunks(parsed_chunks)
     
     if has_contradictions:
         logger.warning("⚠️  Contradictions detected in retrieved chunks")
     
     logger.info(f"   Chunks provided: {len(retrieved_chunks)}")
     logger.info(f"   Parsed documents: {len(parsed_chunks)}")
+    logger.info(f"   Unique sources: {len(sources)}")
     logger.info(f"   Chat history length: {len(chat_history) if chat_history else 0}")
     
     # Build conversation context from chat history
@@ -191,13 +244,17 @@ def generate_answer(question: str, retrieved_chunks: list, chat_history: list = 
         "conversation_history": conversation_context if conversation_context else "No previous conversation."
     })
     
-    answer = result.content if hasattr(result, 'content') else str(result)
+    answer_text = result.content if hasattr(result, 'content') else str(result)
+    
+    # Format final response with answer and sources
+    final_response = format_final_response(answer_text, sources)
     
     logger.info("Answer generated successfully")
-    logger.info(f" Answer length: {len(answer)} characters")
+    logger.info(f" Answer length: {len(answer_text)} characters")
+    logger.info(f" Sources found: {len(sources)}")
     logger.info("=" * 80)
     
-    return answer
+    return final_response
 
 
 #

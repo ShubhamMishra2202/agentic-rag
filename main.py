@@ -16,8 +16,9 @@ def main():
     
     # Example: Multiple queries in a conversation to demonstrate chat history
     queries = [
-        "How does gut microbiome composition influence cardiotoxicity risk?",
-        "How do anthracyclines affect the heart?"
+        # "How does gut microbiome composition influence cardiotoxicity risk?",
+        # "How do anthracyclines affect the heart?"
+        "What types of cardiovascular toxicities are associated with cancer treatment?"
     ]
     
     print("\n" + "="*80)
