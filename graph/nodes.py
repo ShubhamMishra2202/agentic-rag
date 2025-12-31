@@ -3,6 +3,7 @@ from graph.state import GraphState
 from agents.query_rewriter import rewrite_query, refine_query_for_retry
 from agents.retrieval_agent import create_retrieval_agent_graph
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from utils.stop_conditions import is_goodbye_message, is_repeated_question
 import logging
 import re
 import config
@@ -19,6 +20,10 @@ def retrieve_node(state: GraphState) -> GraphState:
     Returns:
         Updated state with context
     """
+    # Initialize stopping flags
+    state["should_stop"] = False
+    state["stop_reason"] = ""
+    
     # Get the retrieval agent
     retrieval_agent = create_retrieval_agent_graph()
     
@@ -26,6 +31,26 @@ def retrieve_node(state: GraphState) -> GraphState:
     messages = state.get("messages", [])
     original_query = state.get("query", "")
     query = original_query
+    
+    # Check for goodbye messages
+    if is_goodbye_message(query):
+        logger.info("👋 Goodbye message detected - stopping conversation")
+        state["should_stop"] = True
+        state["stop_reason"] = "goodbye"
+        state["answer"] = "Thank you! Have a great day!"
+        state["context"] = []
+        state["needs_fallback"] = False
+        return state
+    
+    # Check for repeated questions
+    if is_repeated_question(query, messages):
+        logger.info("🔄 Repeated question detected - stopping conversation")
+        state["should_stop"] = True
+        state["stop_reason"] = "repeated_question"
+        state["answer"] = "I've already answered this question. Is there anything else you'd like to know?"
+        state["context"] = []
+        state["needs_fallback"] = False
+        return state
     
     # Initial query rewriting for follow-up questions
     if len(messages) > 0:
@@ -150,8 +175,20 @@ def retrieve_node(state: GraphState) -> GraphState:
     # Mark if we need fallback (no relevant chunks found)
     if not is_relevant or not context_list:
         state["needs_fallback"] = True
+        # After retry, if still no relevant chunks, stop the conversation
+        logger.info("🛑 No relevant chunks found after retry - stopping conversation")
+        state["should_stop"] = True
+        state["stop_reason"] = "no_relevant_chunks"
+        # Set a final answer message
+        state["answer"] = "I don't have enough information in the knowledge base to answer this question. Please try rephrasing your query or ensure relevant documents have been ingested into the system."
+        # Add messages for consistency
+        if not messages or not isinstance(messages[-1], HumanMessage):
+            messages.append(HumanMessage(content=original_query))
+        messages.append(AIMessage(content=state["answer"]))
+        state["messages"] = messages
     else:
         state["needs_fallback"] = False
+        state["should_stop"] = False
     
     # Filter messages to only keep user messages and final answers
     filtered_messages = []
@@ -176,6 +213,14 @@ def answer_node(state: GraphState) -> GraphState:
     """
     from agents.answering_agent import generate_answer
     
+    # Check if we should stop before generating answer
+    if state.get("should_stop", False):
+        logger.info(f"🛑 Stopping conversation - reason: {state.get('stop_reason', 'unknown')}")
+        # Answer should already be set in retrieve_node for stopping conditions
+        if not state.get("answer"):
+            state["answer"] = "Conversation ended."
+        return state
+    
     context = state.get("context", [])
     question = state.get("query", "")
     messages = state.get("messages", [])
@@ -193,6 +238,8 @@ def answer_node(state: GraphState) -> GraphState:
         
         state["answer"] = fallback_answer
         state["messages"] = messages
+        # Don't stop here - let the user try again with a different question
+        state["should_stop"] = False
         return state
     
     # Filter messages to only keep user messages and final answers

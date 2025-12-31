@@ -15,4 +15,6 @@ class GraphState(TypedDict):
     context: List[str]
     answer: str
     needs_fallback: bool  # Flag to indicate if fallback message should be used
+    should_stop: bool  # Flag to indicate if conversation should stop
+    stop_reason: str  # Reason for stopping (e.g., "goodbye", "repeated_question", "no_relevant_chunks")
 
