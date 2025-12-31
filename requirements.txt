@@ -10,3 +10,4 @@ python-dotenv
 bs4
 sentence-transformers
 langchain-huggingface
+langchain-qdrant

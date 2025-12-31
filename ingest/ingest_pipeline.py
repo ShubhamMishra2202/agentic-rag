@@ -1,8 +1,8 @@
 """Document ingestion pipeline."""
 from typing import List
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Qdrant
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_qdrant import Qdrant
 from ingest.pdf_loader import load_pdf
 from ingest.web_loader import load_web
 from ingest.text_cleaner import clean_text
@@ -59,9 +59,9 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     
     # Create vectorstore and add documents
     vectorstore = Qdrant(
-        client=client,
+        url=config.QDRANT_URL,
         collection_name=collection_name,
-        embeddings=embeddings
+        embedding=embeddings
     )
     
     # Add documents to the vectorstore
