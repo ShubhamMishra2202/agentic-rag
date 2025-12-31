@@ -3,7 +3,7 @@ from graph.state import GraphState
 from agents.query_rewriter import rewrite_query
 from agents.answering_agent import create_answering_agent
 from agents.retrieval_agent import create_retrieval_agent_graph
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 
 def retrieve_node(state: GraphState) -> GraphState:
@@ -27,15 +27,30 @@ def retrieve_node(state: GraphState) -> GraphState:
     # Invoke the LangGraph agent
     result = retrieval_agent.invoke({"messages": messages})
     
-    # Extract the retrieved documents from the agent's response
-    # The agent's final message should contain the retrieved documents
+    # Extract the retrieved documents from tool results, not from agent's summary
+    context_list = []
     if result.get("messages"):
-        last_message = result["messages"][-1]
-        retrieved_content = last_message.content if hasattr(last_message, 'content') else str(last_message)
+        # Look for tool result messages that contain actual chunks
+        # Tool results are typically ToolMessage objects
+        for msg in result["messages"]:
+            # Check if this is a tool result from search_vectorstore
+            if isinstance(msg, ToolMessage):
+                # This is a tool result - extract the chunks
+                if hasattr(msg, 'content') and msg.content:
+                    context_list.append(msg.content)
+            # Also check for messages with tool_call_id (another way tool results are represented)
+            elif hasattr(msg, 'tool_call_id') and hasattr(msg, 'content'):
+                context_list.append(msg.content)
         
-        # Parse the retrieved documents and add to context
-        # This assumes the agent returns formatted document strings
-        context_list = [retrieved_content] if retrieved_content else []
+        # If no tool results found, try to extract from last message
+        # (fallback - but this shouldn't happen if agent follows instructions)
+        if not context_list:
+            last_message = result["messages"][-1]
+            retrieved_content = last_message.content if hasattr(last_message, 'content') else str(last_message)
+            # Only add if it looks like document content, not an answer
+            if retrieved_content and "Document" in retrieved_content:
+                context_list = [retrieved_content]
+        
         state["context"] = context_list
         state["messages"] = result["messages"]  # Update messages with agent's conversation
     else:
@@ -45,7 +60,7 @@ def retrieve_node(state: GraphState) -> GraphState:
 
 
 def answer_node(state: GraphState) -> GraphState:
-    """Generate answer from context.
+    """Generate answer from context with citations.
     
     Args:
         state: Current graph state
@@ -55,7 +70,14 @@ def answer_node(state: GraphState) -> GraphState:
     """
     answering_agent = create_answering_agent()
     
-    context_str = "\n".join(state.get("context", []))
+    context = state.get("context", [])
+    context_str = "\n".join(context) if context else ""
+    
+    # Handle empty context gracefully
+    if not context_str or context_str.strip() == "":
+        state["answer"] = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
+        return state
+    
     result = answering_agent.invoke({
         "context": context_str,
         "question": state["query"]

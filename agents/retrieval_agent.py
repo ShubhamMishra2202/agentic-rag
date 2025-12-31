@@ -6,11 +6,17 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from typing import List, Dict, Optional, Literal
 from vectorstore.qdrant_client import get_qdrant_client
 import config
+import time
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 # Collection name used in ingestion pipeline
@@ -91,6 +97,8 @@ def create_retrieval_plan(user_query: str, conversation_context: str = "") -> st
     Returns:
         A structured retrieval plan with search queries and strategy
     """
+    start_time = time.time()
+    
     llm = ChatOpenAI(
         model=config.MODEL_NAME,
         temperature=config.TEMPERATURE,
@@ -112,6 +120,14 @@ Create a structured retrieval plan that includes:
 Format your response as a clear, actionable plan."""
     
     response = llm.invoke(prompt)
+    elapsed_time = time.time() - start_time
+    
+    logger.info("=" * 80)
+    logger.info("📋 RETRIEVAL PLAN CREATED")
+    logger.info(f"   Query: '{user_query}'")
+    logger.info(f"   Time taken: {elapsed_time:.3f} seconds")
+    logger.info("=" * 80)
+    
     return response.content
 
 
@@ -129,13 +145,26 @@ def search_vectorstore(query: str, k: int = 5) -> str:
     Returns:
         A formatted string containing the retrieved documents with their content
     """
+    start_time = time.time()
+    
     try:
         vectorstore = get_vectorstore()
         results = vectorstore.similarity_search(query, k=k)
         
+        elapsed_time = time.time() - start_time
+        num_chunks = len(results) if results else 0
+        
+        # Log the search details
+        logger.info("=" * 80)
+        logger.info("🔍 VECTOR SEARCH EXECUTED")
+        logger.info(f"   Query: '{query}'")
+        logger.info(f"   Chunks requested (k): {k}")
+        logger.info(f"   Chunks returned: {num_chunks}")
+        logger.info(f"   Time taken: {elapsed_time:.3f} seconds")
+        logger.info("=" * 80)
+        
         if not results:
             return "No relevant documents found."
-        print(f"Results: {results}")
         
         formatted_results = []
         for i, doc in enumerate(results, 1):
@@ -148,6 +177,8 @@ def search_vectorstore(query: str, k: int = 5) -> str:
         
         return "\n---\n".join(formatted_results)
     except Exception as e:
+        elapsed_time = time.time() - start_time
+        logger.error(f"Error searching vectorstore after {elapsed_time:.3f}s: {str(e)}")
         return f"Error searching vectorstore: {str(e)}"
 
 
@@ -169,14 +200,21 @@ def create_retrieval_agent_graph():
     
     # Create prompt with system message
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a retrieval agent that finds relevant documents. "
-         "Follow these steps:\n"
-         "1. First, use create_retrieval_plan to analyze the user's query and conversation history, "
-         "then create a structured retrieval plan.\n"
-         "2. Based on the plan, use search_vectorstore to execute searches for relevant documents.\n"
-         "3. You may need to perform multiple searches if the query is complex or requires different aspects.\n"
-         "4. Adjust the number of results (k parameter) based on query complexity - use higher k for broad queries, lower for specific ones.\n"
-        ),
+        ("system", """You are a retrieval agent that finds relevant documents from a vector database.
+
+CRITICAL REQUIREMENTS:
+1. You MUST call search_vectorstore tool for EVERY query - this is MANDATORY.
+2. You CANNOT answer questions directly - you must retrieve documents first.
+3. After retrieving documents, return them as-is. DO NOT summarize, DO NOT answer questions.
+4. The create_retrieval_plan tool is optional - use it only for complex queries that need planning.
+
+Workflow:
+1. (Optional) Call create_retrieval_plan if the query is complex and needs analysis
+2. (MANDATORY) Call search_vectorstore with the query - you MUST do this for every request
+3. Return the RAW retrieved documents exactly as returned by search_vectorstore
+4. DO NOT summarize, DO NOT provide explanations, DO NOT answer the question
+
+Your ONLY job is to retrieve relevant documents from the vector database. Return the raw document chunks with their sources."""),
         MessagesPlaceholder(variable_name="messages"),
     ])
     
@@ -184,8 +222,21 @@ def create_retrieval_agent_graph():
     def agent_node(state: MessagesState):
         """Call the LLM with tools."""
         messages = state["messages"]
+        
+        # Log agent invocation
+        if len(messages) > 0:
+            last_user_msg = [m for m in messages if isinstance(m, HumanMessage)]
+            if last_user_msg:
+                logger.info(f"🤖 Agent processing query: '{last_user_msg[-1].content[:100]}...'")
+        
         formatted_messages = prompt.invoke({"messages": messages})
         response = llm_with_tools.invoke(formatted_messages.messages)
+        
+        # Log if tool calls were made
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            tool_names = [tc.get('name', 'unknown') for tc in response.tool_calls]
+            logger.info(f"🔧 Agent calling tools: {', '.join(tool_names)}")
+        
         return {"messages": [response]}
     
     # Create tool node
@@ -196,9 +247,34 @@ def create_retrieval_agent_graph():
         """Determine if we should continue to tools or end."""
         messages = state["messages"]
         last_message = messages[-1]
-        # If there are tool calls, go to tools, otherwise end
+        
+        # Check if search_vectorstore has been called at least once
+        has_searched = False
+        for msg in messages:
+            # Check for tool calls
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if tc.get('name') == 'search_vectorstore':
+                        has_searched = True
+                        break
+            # Check for tool result messages
+            if hasattr(msg, 'name') and msg.name == 'search_vectorstore':
+                has_searched = True
+                break
+            if hasattr(msg, 'tool_call_id'):
+                # This might be a tool result
+                has_searched = True
+                break
+        
+        # If there are tool calls, go to tools
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
+        
+        # If we haven't searched yet and no tool calls, force agent to search
+        # (The prompt should handle this, but we log a warning)
+        if not has_searched:
+            logger.warning("⚠️  Agent ended without calling search_vectorstore! This should not happen.")
+        
         return "end"
     
     # Build the graph
@@ -230,6 +306,9 @@ def create_retrieval_agent_graph():
 
 #test the retrieval agent
 if __name__ == "__main__":
+    logger.info("🚀 Starting Retrieval Agent Test")
+    logger.info("=" * 80)
+    
     retrieval_agent = create_retrieval_agent_graph()
     user_query = "What is self-attention?"
     past_conversations = [
@@ -239,14 +318,30 @@ if __name__ == "__main__":
     
     # Format conversation memory
     chat_history = format_conversation_memory(past_conversations)
+    logger.info(f"📝 Conversation history: {len(chat_history)} messages")
     
     # Invoke the LangGraph agent
     # LangGraph agents expect messages format
     messages = chat_history + [HumanMessage(content=user_query)]
     
+    logger.info(f"📨 Invoking retrieval agent with query: '{user_query}'")
+    logger.info("=" * 80)
+    
     result = retrieval_agent.invoke({"messages": messages})
+    
+    logger.info("=" * 80)
+    logger.info("✅ Retrieval Agent Completed")
+    logger.info(f"📊 Total messages in result: {len(result.get('messages', []))}")
+    
+    # Print summary of retrieved chunks
+    if result.get("messages"):
+        for msg in result["messages"]:
+            if isinstance(msg, ToolMessage) and hasattr(msg, 'content'):
+                if "Document" in msg.content:
+                    num_docs = msg.content.count("Document")
+                    logger.info(f"📄 Retrieved {num_docs} document chunks")
+    
+    print("\n" + "=" * 80)
+    print("FINAL RESULT:")
+    print("=" * 80)
     print(result)
-
-  # test the search_vectorstore tool
-#   result=search_vectorstore.invoke("What is self-attention?")
-#   print(result)
