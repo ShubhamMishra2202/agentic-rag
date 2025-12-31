@@ -9,13 +9,8 @@ def get_qdrant_client() -> QdrantClient:
     Returns:
         QdrantClient instance
     """
-    if config.QDRANT_API_KEY:
-        client = QdrantClient(
-            url=config.QDRANT_URL,
-            api_key=config.QDRANT_API_KEY
-        )
-    else:
-        client = QdrantClient(url=config.QDRANT_URL)
+
+    client = QdrantClient(url=config.QDRANT_URL)
     
     return client
 

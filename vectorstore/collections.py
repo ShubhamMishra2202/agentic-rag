@@ -16,6 +16,14 @@ def create_collection(collection_name: str = None, vector_size: int = 1536):
     
     client = get_qdrant_client()
     
+    # Check if collection already exists
+    try:
+        client.get_collection(collection_name)
+        print(f"Collection '{collection_name}' already exists")
+        return
+    except Exception:
+        pass  # Collection doesn't exist, create it
+    
     client.create_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(
@@ -23,4 +31,5 @@ def create_collection(collection_name: str = None, vector_size: int = 1536):
             distance=Distance.COSINE
         )
     )
+    print(f"Created collection '{collection_name}' with vector size {vector_size}")
 
