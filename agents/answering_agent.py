@@ -148,6 +148,10 @@ def create_answering_agent():
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a helpful assistant that answers questions based on retrieved context and previous conversation.
 
+PRIORITY ORDER FOR ANSWERING:
+1. Priority 1: Relevant conversation history - Use previous conversation context to understand follow-up questions and maintain coherence.
+2. Priority 2: Vector DB chunks - Base your answer primarily on the retrieved document chunks from the knowledge base.
+
 CRITICAL INSTRUCTIONS:
 1. Generate ONLY the answer explanation - do NOT include a "Sources:" section (that will be added automatically).
 2. Always cite your sources using the format [Source: <source_name>] when referencing information from the context.

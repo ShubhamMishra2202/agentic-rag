@@ -284,7 +284,7 @@ def retrieve_node(state: GraphState) -> GraphState:
         state["should_stop"] = True
         state["stop_reason"] = "no_relevant_chunks"
         # Set a final answer message with proper formatting
-        answer_text = "I don't have enough information in the knowledge base to answer this question. Please try rephrasing your query or ensure relevant documents have been ingested into the system."
+        answer_text = "I don't have enough information in the knowledge base to answer this question."
         state["answer"] = format_final_response(answer_text, [])
         # Add messages for consistency
         if not messages or not isinstance(messages[-1], HumanMessage):
