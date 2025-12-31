@@ -2,6 +2,7 @@
 from graph.state import GraphState
 from agents.query_rewriter import rewrite_query, refine_query_for_retry
 from agents.retrieval_agent import create_retrieval_agent_graph
+from agents.answering_agent import format_final_response
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from utils.stop_conditions import is_goodbye_message, is_repeated_question
 import logging
@@ -9,6 +10,109 @@ import re
 import config
 
 logger = logging.getLogger(__name__)
+
+
+def intent_classify_node(state: GraphState) -> GraphState:
+    """Classify query intent to determine routing.
+    
+    Args:
+        state: Current graph state
+        
+    Returns:
+        Updated state with intent classification
+    """
+    from agents.intent_classifier import classify_intent
+    
+    query = state.get("query", "")
+    
+    if not query:
+        logger.warning("⚠️  Empty query, defaulting to retrieval_required")
+        state["intent"] = "retrieval_required"
+        return state
+    
+    # Classify intent
+    intent = classify_intent(query)
+    state["intent"] = intent
+    
+    logger.info(f"🎯 Intent classification: '{query[:50]}...' -> {intent}")
+    
+    return state
+
+
+def direct_answer_node(state: GraphState) -> GraphState:
+    """Generate direct answer for queries that don't require retrieval.
+    
+    Args:
+        state: Current graph state
+        
+    Returns:
+        Updated state with answer
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.messages import HumanMessage, AIMessage
+    import config
+    
+    query = state.get("query", "")
+    messages = state.get("messages", [])
+    
+    llm = ChatOpenAI(
+        model=config.MODEL_NAME,
+        temperature=config.TEMPERATURE,
+        api_key=config.OPENAI_API_KEY
+    )
+    
+    # Build conversation context
+    conversation_context = ""
+    if messages:
+        recent_history = messages[-6:]  # Last 6 messages
+        for msg in recent_history:
+            if hasattr(msg, 'type'):
+                if msg.type == "human":
+                    conversation_context += f"User: {msg.content}\n"
+                elif msg.type == "ai":
+                    conversation_context += f"Assistant: {msg.content}\n"
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a helpful assistant. Answer the user's question directly without needing to retrieve documents.
+
+This query has been classified as not requiring document retrieval, so you can answer based on:
+- General knowledge
+- Conversational context
+- System capabilities
+- Common sense
+
+Be friendly, concise, and helpful. If the question is about the system itself, explain what you can do."""),
+        ("human", """Previous conversation:
+{conversation_history}
+
+Current question: {query}
+
+Answer:""")
+    ])
+    
+    chain = prompt | llm
+    result = chain.invoke({
+        "query": query,
+        "conversation_history": conversation_context if conversation_context else "No previous conversation."
+    })
+    
+    answer = result.content if hasattr(result, 'content') else str(result)
+    
+    # Update messages
+    if not messages or not isinstance(messages[-1], HumanMessage):
+        messages.append(HumanMessage(content=query))
+    messages.append(AIMessage(content=answer))
+    
+    state["answer"] = answer
+    state["messages"] = messages
+    state["context"] = []  # No context for direct answers
+    state["needs_fallback"] = False
+    state["should_stop"] = False
+    
+    logger.info(f"💬 Direct answer generated for query: '{query[:50]}...'")
+    
+    return state
 
 
 def retrieve_node(state: GraphState) -> GraphState:
@@ -179,8 +283,9 @@ def retrieve_node(state: GraphState) -> GraphState:
         logger.info("🛑 No relevant chunks found after retry - stopping conversation")
         state["should_stop"] = True
         state["stop_reason"] = "no_relevant_chunks"
-        # Set a final answer message
-        state["answer"] = "I don't have enough information in the knowledge base to answer this question. Please try rephrasing your query or ensure relevant documents have been ingested into the system."
+        # Set a final answer message with proper formatting
+        answer_text = "I don't have enough information in the knowledge base to answer this question. Please try rephrasing your query or ensure relevant documents have been ingested into the system."
+        state["answer"] = format_final_response(answer_text, [])
         # Add messages for consistency
         if not messages or not isinstance(messages[-1], HumanMessage):
             messages.append(HumanMessage(content=original_query))
@@ -229,7 +334,8 @@ def answer_node(state: GraphState) -> GraphState:
     # Check if we need fallback (no relevant chunks found)
     if needs_fallback or not context:
         logger.warning("⚠️  Using fallback message - no relevant chunks found")
-        fallback_answer = "I don't have enough information in the knowledge base to answer."
+        answer_text = "I don't have enough information in the knowledge base to answer."
+        fallback_answer = format_final_response(answer_text, [])
         
         # Add AI response to messages
         if not messages or not isinstance(messages[-1], HumanMessage):

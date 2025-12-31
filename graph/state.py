@@ -1,5 +1,5 @@
 """State definition for the RAG graph."""
-from typing import TypedDict, List, Annotated
+from typing import TypedDict, List, Annotated, Literal
 from langchain_core.messages import BaseMessage
 
 
@@ -17,4 +17,5 @@ class GraphState(TypedDict):
     needs_fallback: bool  # Flag to indicate if fallback message should be used
     should_stop: bool  # Flag to indicate if conversation should stop
     stop_reason: str  # Reason for stopping (e.g., "goodbye", "repeated_question", "no_relevant_chunks")
+    intent: Literal["retrieval_required", "direct_answer", ""]  # Query intent classification
 

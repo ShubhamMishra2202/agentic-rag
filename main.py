@@ -79,7 +79,8 @@ def main():
         "answer": "",
         "needs_fallback": False,
         "should_stop": False,
-        "stop_reason": ""
+        "stop_reason": "",
+        "intent": ""
     }
     
     print("\n" + "="*80)
