@@ -1,8 +1,9 @@
 """Document ingestion pipeline."""
 from typing import List
+import os
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_qdrant import Qdrant
+from langchain_qdrant import QdrantVectorStore
 from ingest.pdf_loader import load_pdf
 from ingest.web_loader import load_web
 from ingest.text_cleaner import clean_text
@@ -24,8 +25,10 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     # Load documents
     if source_type == "pdf":
         documents = load_pdf(source)
+        source_name = os.path.basename(source)
     elif source_type == "web":
         documents = load_web(source)
+        source_name = source
     else:
         raise ValueError(f"Unsupported source type: {source_type}")
     
@@ -38,9 +41,10 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     # Add metadata to the chunks
     for chunk in chunks:
         chunk.metadata = {
-            "source": source,
+            "source": source_name,
             "source_type": source_type,
-            "chunk_index": chunks.index(chunk)
+            "chunk_id": chunks.index(chunk),
+            "chunk_length": len(chunk.page_content)
         }
 
     # Embed the chunks
@@ -58,8 +62,8 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
         create_collection(collection_name=collection_name, vector_size=384)
     
     # Create vectorstore and add documents
-    vectorstore = Qdrant(
-        url=config.QDRANT_URL,
+    vectorstore = QdrantVectorStore(
+        client=client,
         collection_name=collection_name,
         embedding=embeddings
     )
@@ -74,7 +78,7 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
 
 #test the ingest pipeline
 if __name__ == "__main__":
-    chunks = ingest_documents("/home/shubhammishra/Downloads/attention_is_all_you_need.pdf", "pdf")
+    chunks = ingest_documents("https://scrapfly.io/blog/posts/build-a-documentation-chatbot-that-works-on-any-website", "web")
     
     
 
