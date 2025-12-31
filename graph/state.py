@@ -14,4 +14,5 @@ class GraphState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     context: List[str]
     answer: str
+    needs_fallback: bool  # Flag to indicate if fallback message should be used
 

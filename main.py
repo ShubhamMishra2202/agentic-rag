@@ -16,9 +16,8 @@ def main():
     
     # Example: Multiple queries in a conversation to demonstrate chat history
     queries = [
-        "What is self-attention?",
-        "How does it work?",
-        "What are its advantages?"
+        "How does gut microbiome composition influence cardiotoxicity risk?",
+        "How do anthracyclines affect the heart?"
     ]
     
     print("\n" + "="*80)

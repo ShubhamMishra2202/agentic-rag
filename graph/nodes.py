@@ -1,15 +1,17 @@
 """Graph nodes for the RAG workflow."""
 from graph.state import GraphState
-from agents.query_rewriter import rewrite_query
+from agents.query_rewriter import rewrite_query, refine_query_for_retry
 from agents.retrieval_agent import create_retrieval_agent_graph
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 import logging
+import re
+import config
 
 logger = logging.getLogger(__name__)
 
 
 def retrieve_node(state: GraphState) -> GraphState:
-    """Retrieve relevant documents using LangGraph agent with optional query rewriting.
+    """Retrieve relevant documents with relevance checking and retry logic.
     
     Args:
         state: Current graph state
@@ -22,9 +24,10 @@ def retrieve_node(state: GraphState) -> GraphState:
     
     # Prepare messages for the agent
     messages = state.get("messages", [])
-    query = state.get("query", "")
+    original_query = state.get("query", "")
+    query = original_query
     
-    # This helps with follow-up questions like "How does it work?" after "What is X?"
+    # Initial query rewriting for follow-up questions
     if len(messages) > 0:
         # Extract past conversations for query rewriting
         past_conversations = []
@@ -44,53 +47,121 @@ def retrieve_node(state: GraphState) -> GraphState:
             except Exception as e:
                 logger.warning(f"⚠️  Query rewriting failed, using original query: {e}")
     
-    # Add the query as a human message
-    if not messages or not isinstance(messages[-1], HumanMessage) or messages[-1].content != query:
-        messages.append(HumanMessage(content=query))
+    # First retrieval attempt
+    search_messages = [HumanMessage(content=query)]
+    result = retrieval_agent.invoke({"messages": search_messages})
     
-    # Invoke the LangGraph agent
-    result = retrieval_agent.invoke({"messages": messages})
-    
-    # Extract the retrieved documents from tool results, not from agent's summary
+    # Extract chunks and scores from tool results
     context_list = []
-    if result.get("messages"):
-        # Look for tool result messages that contain actual chunks
-        # Tool results are typically ToolMessage objects
-        for msg in result["messages"]:
-            # Check if this is a tool result from search_vectorstore
-            if isinstance(msg, ToolMessage):
-                # This is a tool result - extract the chunks
-                if hasattr(msg, 'content') and msg.content:
-                    context_list.append(msg.content)
-            # Also check for messages with tool_call_id (another way tool results are represented)
-            elif hasattr(msg, 'tool_call_id') and hasattr(msg, 'content'):
-                context_list.append(msg.content)
-        
-        # If no tool results found, try to extract from last message
-        # (fallback - but this shouldn't happen if agent follows instructions)
-        if not context_list:
-            last_message = result["messages"][-1]
-            retrieved_content = last_message.content if hasattr(last_message, 'content') else str(last_message)
-            # Only add if it looks like document content, not an answer
-            if retrieved_content and "Document" in retrieved_content:
-                context_list = [retrieved_content]
-        
-        state["context"] = context_list
-        
-        # Filter messages to only keep user messages and final answers (no internal reaoning)
-        # Keep only HumanMessage and AIMessage without tool_calls
-        filtered_messages = []
-        for msg in messages:  # Keep existing messages (user questions and final answers)
-            if isinstance(msg, HumanMessage):
-                filtered_messages.append(msg)
-            elif isinstance(msg, AIMessage) and not (hasattr(msg, 'tool_calls') and msg.tool_calls):
-                # Only keep AIMessage that don't have tool calls (final answers, not internal reasoning)
-                filtered_messages.append(msg)
-        
-        state["messages"] = filtered_messages  # Only store user messages and final answers
-    else:
-        state["context"] = []
+    chunks_with_scores = []
     
+    if result.get("messages"):
+        for msg in result["messages"]:
+            if isinstance(msg, ToolMessage) and hasattr(msg, 'content'):
+                content = msg.content
+                if content and "Document" in content:
+                    context_list.append(content)
+                    # Parse scores from the formatted string
+                    # Format: "Document X (Source: Y, Score: 0.1234):\ncontent"
+                    score_matches = re.findall(r'Score: ([\d.]+)', content)
+                    if score_matches:
+                        for score_str in score_matches:
+                            chunks_with_scores.append(float(score_str))
+    
+    # Check relevance: sort scores and check top score
+    relevance_threshold = getattr(config, 'RELEVANCE_THRESHOLD', 0.7)
+    is_relevant = False
+    
+    if chunks_with_scores:
+        # Sort scores in descending order
+        sorted_scores = sorted(chunks_with_scores, reverse=True)
+        top_score = sorted_scores[0]
+        
+        logger.info(f"📊 Relevance Check:")
+        logger.info(f"   Top similarity score: {top_score:.4f}")
+        logger.info(f"   Threshold: {relevance_threshold:.4f}")
+        
+        if top_score >= relevance_threshold:
+            is_relevant = True
+            logger.info(f"✅ Chunks are relevant (score {top_score:.4f} >= {relevance_threshold:.4f})")
+        else:
+            logger.warning(f"⚠️  Chunks are NOT relevant (score {top_score:.4f} < {relevance_threshold:.4f})")
+    elif context_list:
+        # If we have chunks but no scores, assume relevant (fallback)
+        logger.warning("⚠️  No scores found in chunks, assuming relevant")
+        is_relevant = True
+    
+    # If not relevant, refine query and retry once
+    if not is_relevant and context_list:
+        logger.info("🔄 Refining query and retrying...")
+        
+        try:
+            refined_query = refine_query_for_retry(original_query, context_list)
+            logger.info(f"📝 Refined query: '{original_query}' -> '{refined_query}'")
+            
+            # Retry with refined query
+            retry_messages = [HumanMessage(content=refined_query)]
+            retry_result = retrieval_agent.invoke({"messages": retry_messages})
+            
+            # Extract retry chunks and scores
+            retry_context = []
+            retry_scores = []
+            
+            for msg in retry_result.get("messages", []):
+                if isinstance(msg, ToolMessage) and hasattr(msg, 'content'):
+                    content = msg.content
+                    if content and "Document" in content:
+                        retry_context.append(content)
+                        score_matches = re.findall(r'Score: ([\d.]+)', content)
+                        if score_matches:
+                            for score_str in score_matches:
+                                retry_scores.append(float(score_str))
+            
+            # Check relevance of retry results
+            if retry_scores:
+                retry_sorted = sorted(retry_scores, reverse=True)
+                retry_top_score = retry_sorted[0]
+                
+                logger.info(f"📊 Retry Relevance Check:")
+                logger.info(f"   Top similarity score: {retry_top_score:.4f}")
+                logger.info(f"   Threshold: {relevance_threshold:.4f}")
+                
+                if retry_top_score >= relevance_threshold:
+                    is_relevant = True
+                    context_list = retry_context
+                    logger.info(f"✅ Retry successful - chunks are relevant (score {retry_top_score:.4f})")
+                else:
+                    logger.warning(f"⚠️  Retry still NOT relevant (score {retry_top_score:.4f} < {relevance_threshold:.4f})")
+                    context_list = []  # Clear for fallback
+            elif retry_context:
+                # Retry got chunks but no scores - use them
+                context_list = retry_context
+                is_relevant = True
+            else:
+                # No results on retry
+                context_list = []
+        except Exception as e:
+            logger.error(f"❌ Query refinement/retry failed: {e}")
+            context_list = []  # Fallback
+    
+    # Set context and flag for fallback
+    state["context"] = context_list
+    
+    # Mark if we need fallback (no relevant chunks found)
+    if not is_relevant or not context_list:
+        state["needs_fallback"] = True
+    else:
+        state["needs_fallback"] = False
+    
+    # Filter messages to only keep user messages and final answers
+    filtered_messages = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            filtered_messages.append(msg)
+        elif isinstance(msg, AIMessage) and not (hasattr(msg, 'tool_calls') and msg.tool_calls):
+            filtered_messages.append(msg)
+    
+    state["messages"] = filtered_messages
     return state
 
 
@@ -104,11 +175,25 @@ def answer_node(state: GraphState) -> GraphState:
         Updated state with answer and updated messages
     """
     from agents.answering_agent import generate_answer
-    from langchain_core.messages import HumanMessage, AIMessage
     
     context = state.get("context", [])
     question = state.get("query", "")
     messages = state.get("messages", [])
+    needs_fallback = state.get("needs_fallback", False)
+    
+    # Check if we need fallback (no relevant chunks found)
+    if needs_fallback or not context:
+        logger.warning("⚠️  Using fallback message - no relevant chunks found")
+        fallback_answer = "I don't have enough information in the knowledge base to answer."
+        
+        # Add AI response to messages
+        if not messages or not isinstance(messages[-1], HumanMessage):
+            messages.append(HumanMessage(content=question))
+        messages.append(AIMessage(content=fallback_answer))
+        
+        state["answer"] = fallback_answer
+        state["messages"] = messages
+        return state
     
     # Filter messages to only keep user messages and final answers
     # Remove any tool messages or internal reasoning that might have slipped through

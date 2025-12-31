@@ -133,7 +133,7 @@ Format your response as a clear, actionable plan."""
 
 @tool
 def search_vectorstore(query: str, k: int = 5) -> str:
-    """Search the vector database for relevant documents.
+    """Search the vector database for relevant documents with similarity scores.
     
     This tool searches the document collection using semantic similarity
     to find the most relevant chunks for a given query.
@@ -143,13 +143,14 @@ def search_vectorstore(query: str, k: int = 5) -> str:
         k: Number of documents to retrieve (default: 5)
         
     Returns:
-        A formatted string containing the retrieved documents with their content
+        A formatted string containing the retrieved documents with their content and scores
     """
     start_time = time.time()
     
     try:
         vectorstore = get_vectorstore()
-        results = vectorstore.similarity_search(query, k=k)
+        # Use similarity_search_with_score to get similarity scores
+        results = vectorstore.similarity_search_with_score(query, k=k)
         
         elapsed_time = time.time() - start_time
         num_chunks = len(results) if results else 0
@@ -160,19 +161,29 @@ def search_vectorstore(query: str, k: int = 5) -> str:
         logger.info(f"   Query: '{query}'")
         logger.info(f"   Chunks requested (k): {k}")
         logger.info(f"   Chunks returned: {num_chunks}")
+        
+        if not results:
+            logger.info("   No results found")
+            logger.info(f"   Time taken: {elapsed_time:.3f} seconds")
+            logger.info("=" * 80)
+            return "No relevant documents found."
+        
+        # Sort by score (descending) - results are already sorted, but ensure it
+        results_sorted = sorted(results, key=lambda x: x[1], reverse=True)
+        
+        # Log top score
+        top_score = results_sorted[0][1] if results_sorted else 0.0
+        logger.info(f"   Top similarity score: {top_score:.4f}")
         logger.info(f"   Time taken: {elapsed_time:.3f} seconds")
         logger.info("=" * 80)
         
-        if not results:
-            return "No relevant documents found."
-        
         formatted_results = []
-        for i, doc in enumerate(results, 1):
+        for i, (doc, score) in enumerate(results_sorted, 1):
             content = doc.page_content
             metadata = doc.metadata
             source = metadata.get("source", "Unknown")
             formatted_results.append(
-                f"Document {i} (Source: {source}):\n{content}\n"
+                f"Document {i} (Source: {source}, Score: {score:.4f}):\n{content}\n"
             )
         
         return "\n---\n".join(formatted_results)

@@ -21,3 +21,6 @@ TEMPERATURE = 0.3
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 
+# Retrieval Configuration
+RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.7"))  # Default 0.7 for cosine similarity
+
