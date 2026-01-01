@@ -55,7 +55,7 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     )
 
     # Create collection if it doesn't exist (all-MiniLM-L6-v2 has 384 dimensions)
-    collection_name = "agentic_rag_docs"
+    collection_name = config.COLLECTION_NAME
     client = get_qdrant_client()
 
     try:
@@ -76,3 +76,13 @@ def ingest_documents(source: str, source_type: str = "pdf") -> List[Document]:
     print(f"Ingested {len(chunks)} chunks into Qdrant")
     print(f"Vectorstore: {vectorstore}")
     return chunks
+
+# ingest 
+if __name__ == "__main__":
+    try:
+        chunks_web = ingest_documents("https://scrapfly.io/blog/posts/build-a-documentation-chatbot-that-works-on-any-website", "web")
+        chunks_pdf = ingest_documents("data/cardio-oncology.pdf", "pdf")
+
+        print("Data ingested successfully")
+    except Exception as e:
+        print(f"Error ingesting data: {e}")

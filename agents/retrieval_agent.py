@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # Collection name used in ingestion pipeline
-COLLECTION_NAME = "agentic_rag_docs"
+COLLECTION_NAME = config.COLLECTION_NAME
 
 
 def get_vectorstore():
