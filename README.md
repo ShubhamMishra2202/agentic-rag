@@ -106,6 +106,9 @@ Verify Qdrant is running:
 curl http://localhost:6333/health
 ```
 
+You can also access the Qdrant dashboard to view collections and manage your vector database:
+- **Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
+
 ### 5. Ingest Documents
 
 Before querying, you need to ingest documents into the vector database. The ingestion pipeline supports:
