@@ -22,5 +22,5 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 
 # Retrieval Configuration
-RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.4")) 
+RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.5")) 
 

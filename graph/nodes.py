@@ -17,6 +17,28 @@ import config
 logger = logging.getLogger(__name__)
 
 
+def _normalize_text(text: str) -> str:
+    """Normalize text for comparison.
+
+    Args:
+        text: Text to normalize
+
+    Returns:
+        Normalized text (lowercase, stripped, punctuation removed)
+    """
+    if not text:
+        return ""
+
+    # Convert to lowercase and strip
+    normalized = text.lower().strip()
+
+    # Remove punctuation and extra whitespace
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+
+    return normalized
+
+
 def intent_classify_node(state: GraphState) -> GraphState:
     """Classify query intent to determine routing.
 
@@ -78,11 +100,35 @@ def direct_answer_node(state: GraphState) -> GraphState:
     # Check for repeated questions
     if is_repeated_question(query, messages):
         logger.info("Repeated question detected - stopping conversation")
+
+        # Find the previous answer for this question
+        query_normalized = _normalize_text(query)
+        previous_answer = None
+
+        # Search through messages to find matching question and its answer
+        for i, msg in enumerate(messages):
+            if isinstance(msg, HumanMessage) and hasattr(msg, "content"):
+                prev_query_normalized = _normalize_text(msg.content)
+                # Check if this previous question matches the current one
+                if prev_query_normalized == query_normalized:
+                    # Found the matching question, look for the next AI response
+                    for j in range(i + 1, len(messages)):
+                        if isinstance(messages[j], AIMessage):
+                            previous_answer = messages[j].content
+                            break
+                    if previous_answer:
+                        break
+
+        # Format the response
+        if previous_answer:
+            state["answer"] = (
+                f"You already asked this earlier; here is the same answer.\n\n{previous_answer}"
+            )
+        else:
+            state["answer"] = "You already asked this earlier; here is the same answer."
+
         state["should_stop"] = True
         state["stop_reason"] = "repeated_question"
-        state["answer"] = (
-            "I've already answered this question. Is there anything else you'd like to know?"
-        )
         state["context"] = []
         state["needs_fallback"] = False
         return state

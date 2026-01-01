@@ -3,6 +3,12 @@
 from graph.state import GraphState
 import re
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def is_goodbye_message(query: str) -> bool:
@@ -168,12 +174,7 @@ def _is_answer_complete_llm(question: str, answer: str) -> bool:
     Returns:
         True if answer is complete, False otherwise
     """
-    from langchain_openai import ChatOpenAI
-    from langchain_core.prompts import ChatPromptTemplate
-    import config
-    import logging
-
-    logger = logging.getLogger(__name__)
+   
 
     try:
         llm = ChatOpenAI(
