@@ -4,7 +4,7 @@ from agents.query_rewriter import rewrite_query, refine_query_for_retry
 from agents.retrieval_agent import create_retrieval_agent_graph
 from agents.answering_agent import format_final_response
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
-from utils.stop_conditions import is_goodbye_message, is_repeated_question
+from utils.stop_conditions import is_goodbye_message, is_repeated_question, is_answer_complete
 import logging
 import re
 import config
@@ -55,6 +55,30 @@ def direct_answer_node(state: GraphState) -> GraphState:
     
     query = state.get("query", "")
     messages = state.get("messages", [])
+    
+    # Initialize stopping flags
+    state["should_stop"] = False
+    state["stop_reason"] = ""
+    
+    # Check for goodbye messages
+    if is_goodbye_message(query):
+        logger.info("👋 Goodbye message detected - stopping conversation")
+        state["should_stop"] = True
+        state["stop_reason"] = "goodbye"
+        state["answer"] = "Thank you! Have a great day!"
+        state["context"] = []
+        state["needs_fallback"] = False
+        return state
+    
+    # Check for repeated questions
+    if is_repeated_question(query, messages):
+        logger.info("🔄 Repeated question detected - stopping conversation")
+        state["should_stop"] = True
+        state["stop_reason"] = "repeated_question"
+        state["answer"] = "I've already answered this question. Is there anything else you'd like to know?"
+        state["context"] = []
+        state["needs_fallback"] = False
+        return state
     
     llm = ChatOpenAI(
         model=config.MODEL_NAME,
@@ -135,26 +159,6 @@ def retrieve_node(state: GraphState) -> GraphState:
     messages = state.get("messages", [])
     original_query = state.get("query", "")
     query = original_query
-    
-    # Check for goodbye messages
-    if is_goodbye_message(query):
-        logger.info("👋 Goodbye message detected - stopping conversation")
-        state["should_stop"] = True
-        state["stop_reason"] = "goodbye"
-        state["answer"] = "Thank you! Have a great day!"
-        state["context"] = []
-        state["needs_fallback"] = False
-        return state
-    
-    # Check for repeated questions
-    if is_repeated_question(query, messages):
-        logger.info("🔄 Repeated question detected - stopping conversation")
-        state["should_stop"] = True
-        state["stop_reason"] = "repeated_question"
-        state["answer"] = "I've already answered this question. Is there anything else you'd like to know?"
-        state["context"] = []
-        state["needs_fallback"] = False
-        return state
     
     # Initial query rewriting for follow-up questions
     if len(messages) > 0:
@@ -365,6 +369,24 @@ def answer_node(state: GraphState) -> GraphState:
     
     # Generate answer using the enhanced answering agent with chat history
     answer = generate_answer(question, context, chat_history=messages)
+    
+    # Check if answer is complete and fully resolved
+    # Extract just the answer text (without Sources section) for completeness check
+    answer_text_only = answer.split("Sources:")[0].replace("Answer:\n", "").strip()
+    
+    try:
+        is_complete = is_answer_complete(question, answer_text_only)
+        
+        if is_complete:
+            logger.info("✅ Answer determined to be complete - appending closing message")
+            # Append closing message to the answer
+            closing_message = "\n\nIf you need anything else, feel free to ask. Otherwise, I'll end the session."
+            answer = answer + closing_message
+        else:
+            logger.info("ℹ️  Answer may be incomplete - no closing message added")
+    except Exception as e:
+        logger.warning(f"⚠️  Error checking answer completeness: {e} - continuing without check")
+        # Continue without completeness check if it fails
     
     # Add AI response to messages (this is a final answer, not internal reasoning)
     messages.append(AIMessage(content=answer))

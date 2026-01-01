@@ -181,3 +181,78 @@ def max_iterations_reached(iterations: int, max_iter: int = 10) -> Callable:
     
     return check
 
+
+def is_answer_complete(question: str, answer: str) -> bool:
+    """Check if the answer fully resolves the question using LLM.
+    
+    Args:
+        question: User's original question
+        answer: Generated answer text (without Sources section)
+        
+    Returns:
+        True if answer is complete/fully resolved, False otherwise
+    """
+    if not question or not answer:
+        return False
+    
+    return _is_answer_complete_llm(question, answer)
+
+
+def _is_answer_complete_llm(question: str, answer: str) -> bool:
+    """Use LLM to determine if answer is complete.
+    
+    Args:
+        question: User's original question
+        answer: Generated answer text
+        
+    Returns:
+        True if answer is complete, False otherwise
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.prompts import ChatPromptTemplate
+    import config
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        llm = ChatOpenAI(
+            model=config.MODEL_NAME,
+            temperature=0.1,  # Low temperature for consistent evaluation
+            api_key=config.OPENAI_API_KEY
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an evaluator that determines if an answer fully resolves a question.
+
+Analyze whether the answer:
+1. Directly addresses all parts of the question
+2. Provides sufficient detail and completeness
+3. Doesn't leave critical aspects unanswered
+4. Is conclusive rather than partial or tentative
+
+Respond with ONLY "YES" if the answer is complete and fully resolved, or "NO" if it's incomplete or partial."""),
+            ("human", """Question: {question}
+
+Answer: {answer}
+
+Is this answer complete and fully resolved? (YES/NO):""")
+        ])
+        
+        chain = prompt | llm
+        result = chain.invoke({
+            "question": question,
+            "answer": answer
+        })
+        
+        response = result.content.strip().upper() if hasattr(result, 'content') else str(result).strip().upper()
+        is_complete = response.startswith("YES")
+        
+        logger.info(f"📊 Answer completeness check: {'✅ Complete' if is_complete else '❌ Incomplete'}")
+        return is_complete
+        
+    except Exception as e:
+        logger.warning(f"⚠️  Error checking answer completeness with LLM: {e}")
+        # On error, assume incomplete to be safe (don't add closing message)
+        return False
+
