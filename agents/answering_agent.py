@@ -55,38 +55,6 @@ def parse_retrieved_chunks(context_str: str) -> list:
     return chunks
 
 
-def detect_contradictions(chunks: list) -> bool:
-    """Detect if chunks contain contradictory information.
-
-    Args:
-        chunks: List of chunk dicts with content
-
-    Returns:
-        True if contradictions detected, False otherwise
-    """
-    if len(chunks) < 2:
-        return False
-
-    # Simple heuristic: check for conflicting keywords
-    # This is a basic implementation - could be enhanced with LLM
-    content_text = " ".join([chunk["content"].lower() for chunk in chunks])
-
-    # Check for common contradiction patterns
-    contradiction_patterns = [
-        ("not", "is"),
-        ("never", "always"),
-        ("cannot", "can"),
-        ("false", "true"),
-        ("incorrect", "correct"),
-    ]
-
-    for pattern1, pattern2 in contradiction_patterns:
-        if pattern1 in content_text and pattern2 in content_text:
-            return True
-
-    return False
-
-
 def extract_sources_from_chunks(parsed_chunks: list) -> list:
     """Extract unique sources from parsed chunks.
 
@@ -158,10 +126,17 @@ CRITICAL INSTRUCTIONS:
 3. Extract the source name from the context format "Document X (Source: <source_name>)".
 4. Use the conversation history to understand context and provide coherent, follow-up answers.
 5. If the user asks a follow-up question, reference previous answers when relevant.
-6. If the retrieved chunks contain contradictory information, explicitly mention this limitation:
-   - State: "Note: The retrieved documents contain contradictory information."
-   - Present both perspectives if possible.
-   - Indicate which sources support which claims.
+6. CONTRADICTION DETECTION AND HANDLING:
+   - Carefully analyze all retrieved chunks for contradictory information about the same topic or fact.
+   - A contradiction occurs when different sources make opposing factual claims about the same subject that cannot both be true.
+   - If you detect contradictions:
+     * Explicitly state: "Note: The retrieved documents contain contradictory information."
+     * Identify the specific conflicting claims clearly
+     * Present both perspectives side-by-side
+     * Indicate which sources [Source: X] support which claims
+     * If possible, explain why the contradiction might exist (different contexts, dates, perspectives, or evolving information)
+     * Help the user understand the uncertainty rather than presenting one view as definitive
+   - Be especially careful when chunks make opposing factual claims, numerical discrepancies, or conflicting definitions about the same subject.
 7. If no context is provided or context is empty, answer gracefully:
    - State: "I don't have enough information from the retrieved documents to answer this question."
    - Suggest: "Please try rephrasing your query or ensure documents have been ingested into the system."
@@ -216,13 +191,9 @@ def generate_answer(
         answer_text = "I don't have enough information from the retrieved documents to answer this question. Please try rephrasing your query or ensure documents have been ingested into the system."
         return format_final_response(answer_text, [])
 
-    # Parse chunks to detect contradictions and extract sources
+    # Parse chunks to extract sources
     parsed_chunks = parse_retrieved_chunks(context_str)
-    has_contradictions = detect_contradictions(parsed_chunks)
     sources = extract_sources_from_chunks(parsed_chunks)
-
-    if has_contradictions:
-        logger.warning("Contradictions detected in retrieved chunks")
 
     logger.info(
         f"Generating answer: {len(retrieved_chunks)} chunks, {len(parsed_chunks)} parsed docs, {len(sources)} sources"
