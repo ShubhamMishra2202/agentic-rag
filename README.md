@@ -248,6 +248,35 @@ Conversations can end due to:
 
 ## 🧪 Testing
 
+After ingesting the default `cardio-oncology.pdf` document, you can test the system with the following queries:
+
+### Test Queries for cardio-oncology.pdf
+
+**Negative Queries** (no context present in the document):
+- `"How does gut microbiome composition influence cardiotoxicity risk?"`
+- `"How do anthracyclines affect the heart?"`
+
+These queries should demonstrate how the system handles cases where no relevant information is found in the knowledge base.
+
+**Positive Query** (context present in the document):
+- `"What types of cardiovascular toxicities are associated with cancer treatment?"`
+
+This query should successfully retrieve relevant information from the ingested document and generate a response with citations.
+
+### Running Tests
+
+1. Start the application:
+```bash
+python main.py
+```
+
+2. Enter the test queries one by one to observe:
+   - How the system handles queries with no relevant context
+   - How the system retrieves and cites information when context is available
+   - The quality of source citations and answer generation
+
+### Debugging
+
 The system includes comprehensive logging. To see detailed logs:
 
 ```python
